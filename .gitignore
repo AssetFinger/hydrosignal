@@ -1,0 +1,7 @@
+cat <<'EOF' > .gitignore
+node_modules/
+.env
+bot.env
+auth_info/
+last_trigger.txt
+EOF
