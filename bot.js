@@ -172,6 +172,8 @@ async function createVoiceNoteOgg(text, outPath) {
 
 // ==== Trigger pattern ====
 const part1 = /Kamu juga bisa cek syarat dan ketentuan di bit.ly\/HYDROPLUSNonstopMiliaranSnK untuk mengetahui promo ini lebih lanjut./i
+const part2 = /Selamat\s+ya,\s*kamu\s+sudah\s+dapat\s+semua\s+hadiahmu\s+dari\s+Hydroplus\./i
+const part3 = /Nonstop\s+Miliaran\s+Hydroplus/i
 
 // ==== Hi loop controller ====
 let hiLoopController = { running: false }
@@ -242,7 +244,9 @@ async function startBot() {
 
       // deteksi trigger
       const hasPart1 = part1.test(text)
-      if (hasPart1) {
+      const hasPart2 = part2.test(text)
+      const hasPart3 = part3.test(text)
+      if (hasPart1 || (hasPart2 && hasPart3)) {
         saveLastTrigger(text)
 
         try {
