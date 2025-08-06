@@ -171,9 +171,10 @@ async function createVoiceNoteOgg(text, outPath) {
 }
 
 // ==== Trigger pattern ====
-const part1 = /Kamu juga bisa cek syarat dan ketentuan di bit.ly\/HYDROPLUSNonstopMiliaranSnK untuk mengetahui promo ini lebih lanjut./i
-const part2 = /Selamat\s+ya,\s*kamu\s+sudah\s+dapat\s+semua\s+hadiahmu\s+dari\s+Hydroplus\./i
-const part3 = /Nonstop\s+Miliaran\s+Hydroplus/i
+// Pemicu sekarang mencari pesan yang TIDAK termasuk dalam 3 pesan standar ini
+const part1 = /Selamat datang di akun Whatsapp Resmi HYDROPLUS/i
+const part2 = /Yuk coba lagi dengan kode unik yang lain di dalam tutup botol HYDROPLUS untuk dapatkan hadiahnya/i
+const part3 = /Terima kasih telah berpartisipasi dalam program HYDROPLUS Nonstop Miliaran🤗[\s\S]*Ketik "Hi" untuk memulai chatting kembali/i
 
 // ==== Hi loop controller ====
 let hiLoopController = { running: false }
@@ -246,7 +247,7 @@ async function startBot() {
       const hasPart1 = part1.test(text)
       const hasPart2 = part2.test(text)
       const hasPart3 = part3.test(text)
-      if (hasPart1 || (hasPart2 && hasPart3)) {
+      if (!hasPart1 && !hasPart2 && !hasPart3) {
         saveLastTrigger(text)
 
         try {
