@@ -1,4 +1,5 @@
 // bot.js – forward trigger ke owner WhatsApp + grup Telegram dengan voice note
+const twilio = require('twilio')
 const fs = require('fs')
 const path = require('path')
 const makeWASocket = require('@whiskeysockets/baileys').default
@@ -22,6 +23,10 @@ const nomorTujuanAwal = '6287780010053@s.whatsapp.net' // sumber pesan/trigger
 const nomorForwardKe = process.env.WHATSAPP_OWNER // owner WhatsApp
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
+const NOMOR_PENERIMA_PANGGILAN = process.env.WHATSAPP_OWNER.replace('@s.whatsapp.net', '')
 
 // Debug konfigurasi
 console.log('=== konfigurasi ===')
@@ -29,6 +34,7 @@ console.log('WHATSAPP_OWNER =', nomorForwardKe)
 console.log('TELEGRAM_BOT_TOKEN =', TELEGRAM_BOT_TOKEN ? '[TERSEDIA]' : '[TIDAK ADA]')
 console.log('TELEGRAM_CHAT_ID =', TELEGRAM_CHAT_ID)
 console.log('===================')
+console.log('TWILIO_PHONE_NUMBER =', TWILIO_PHONE_NUMBER)
 
 // Validasi
 if (!nomorForwardKe) {
@@ -38,6 +44,10 @@ if (!nomorForwardKe) {
 if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
   console.error('❌ TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak diset di bot.env/.env')
   process.exit(1)
+}
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+  console.error('❌ Kredensial TWILIO tidak diset di bot.env/.env')
+  // Anda bisa memilih untuk tidak exit(1) jika panggilan hanya fitur opsional
 }
 
 // ==== Persist last trigger (optional) ====
@@ -233,73 +243,100 @@ async function startBot() {
   })
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
-    const msg = messages[0]
-    if (!msg || !msg.message) return
-    const sender = msg.key.remoteJid
-    const text = extractTextFromMessage(msg).trim()
+    if (type !== 'notify') return
+    const msg = messages[0]
+    if (!msg || !msg.message) return
+    const sender = msg.key.remoteJid
+    const text = extractTextFromMessage(msg).trim()
 
-    if (sender === nomorTujuanAwal && text.length > 0) {
-      // forward umum ke WhatsApp owner
-      await forwardToWhatsAppOwner(sock, `📩 Diteruskan dari ${nomorTujuanAwal}:\n${text}`)
+    if (sender === nomorTujuanAwal && text.length > 0) {
+      // forward umum ke WhatsApp owner
+      await forwardToWhatsAppOwner(sock, `📩 Diteruskan dari ${nomorTujuanAwal}:\n${text}`)
 
-      // deteksi trigger
-      const hasPart1 = part1.test(text)
-      const hasPart2 = part2.test(text)
-      const hasPart3 = part3.test(text)
-      if (!hasPart1 && !hasPart2 && !hasPart3) {
-        saveLastTrigger(text)
+      // deteksi trigger
+      const hasPart1 = part1.test(text)
+      const hasPart2 = part2.test(text)
+      const hasPart3 = part3.test(text)
+      if (!hasPart1 && !hasPart2 && !hasPart3) {
+        saveLastTrigger(text)
+        // DEFINISI 'now' DIPINDAHKAN KE SINI UNTUK MENGHINDARI ERROR
+        const now = Date.now();
+        
+        // Logika Panggilan Telepon (Alarm)
+        const maxCalls = 3;
+        const callCountKey = `call_${text}`;
+        const callInfo = triggerCountMap.get(callCountKey) || { count: 0, lastSeen: now };
 
-        try {
-          // === WhatsApp owner ===
-          // voice note "BOT SUDAH ON!" terlebih dulu
-          try {
-            const tmpOggWA = './bot_sudah_on_whatsapp.ogg'
-            await createVoiceNoteOgg('Bot sudah on!', tmpOggWA)
-            await sock.sendMessage(nomorForwardKe, {
-              audio: fs.readFileSync(tmpOggWA),
-              ptt: true
-            })
-            log('🎙️ Voice note "BOT SUDAH ON!" dikirim ke owner WhatsApp')
-            fs.unlinkSync(tmpOggWA)
-          } catch (err) {
-            log('⚠️ Gagal voice note WhatsApp, fallback teks:', err.message || err)
-            await forwardToWhatsAppOwner(sock, 'BOT SUDAH ON!')
-          }
-          // detail trigger ke WA owner
-          await forwardToWhatsAppOwner(sock, `📣 [TRIGGER] ${text}`)
+        if (callInfo.count < maxCalls) {
+          try {
+            const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-          // === Telegram (maksimal 2x per teks) ===
-          const now = Date.now()
-          const entry = triggerCountMap.get(text) || { count: 0, lastSeen: now }
-          entry.lastSeen = now
+            await twilioClient.calls.create({
+              twiml: '<Response><Say voice="male">Alarm. Ada pesan tidak terduga.</Say><Hangup/></Response>',
+              to: NOMOR_PENERIMA_PANGGILAN,
+              from: TWILIO_PHONE_NUMBER,
+            });
 
-          if (entry.count < 2) {
-            // Kirim teks ke Telegram
-            await sendToTelegram('BOT SUDAH ON!')
-            await sendToTelegram(`📣 [TRIGGER] ${text}`)
+            log(`📞 Panggilan alarm ke ${NOMOR_PENERIMA_PANGGILAN} berhasil.`);
+            callInfo.count += 1;
+            triggerCountMap.set(callCountKey, callInfo);
+          } catch (callError) {
+            log('❌ Gagal membuat panggilan alarm:', callError.message || callError);
+          }
+        } else {
+          log('⚠️ Sudah 3x panggilan alarm untuk trigger ini, melewatkan.');
+        }
 
-            // Kirim voice note ke Telegram
-            try {
-              const tmpVoiceTG = './bot_sudah_on_telegram.ogg'
-              await createVoiceNoteOgg('Bot sudah on!', tmpVoiceTG)
-              await sendVoiceToTelegram(tmpVoiceTG, 'BOT SUDAH ON!')
-              fs.unlinkSync(tmpVoiceTG)
-            } catch (e) {
-              log('⚠️ Gagal buat/kirim voice note ke Telegram:', e?.message || e)
-            }
+        try {
+          // === WhatsApp owner ===
+          // voice note "BOT SUDAH ON!" terlebih dulu
+          try {
+            const tmpOggWA = './bot_sudah_on_whatsapp.ogg'
+            await createVoiceNoteOgg('Bot sudah on!', tmpOggWA)
+            await sock.sendMessage(nomorForwardKe, {
+              audio: fs.readFileSync(tmpOggWA),
+              ptt: true
+            })
+            log('🎙️ Voice note "BOT SUDAH ON!" dikirim ke owner WhatsApp')
+            fs.unlinkSync(tmpOggWA)
+          } catch (err) {
+            log('⚠️ Gagal voice note WhatsApp, fallback teks:', err.message || err)
+            await forwardToWhatsAppOwner(sock, 'BOT SUDAH ON!')
+          }
+          // detail trigger ke WA owner
+          await forwardToWhatsAppOwner(sock, `📣 [TRIGGER] ${text}`)
 
-            entry.count += 1
-            triggerCountMap.set(text, entry)
-          } else {
-            log('⚠️ Sudah forward 2x untuk trigger ini ke Telegram, melewatkan.')
-          }
-        } catch (err) {
-          log('❌ Error saat handle trigger multi-forward dengan voice note:', err?.message || err)
-        }
-      }
-    }
-  })
+          // === Telegram (maksimal 2x per teks) ===
+          // 'now' sudah didefinisikan di atas, jadi ini tidak perlu diubah.
+          const entry = triggerCountMap.get(text) || { count: 0, lastSeen: now }
+          entry.lastSeen = now
+
+          if (entry.count < 2) {
+            // Kirim teks ke Telegram
+            await sendToTelegram('BOT SUDAH ON!')
+            await sendToTelegram(`📣 [TRIGGER] ${text}`)
+
+            // Kirim voice note ke Telegram
+            try {
+              const tmpVoiceTG = './bot_sudah_on_telegram.ogg'
+              await createVoiceNoteOgg('Bot sudah on!', tmpVoiceTG)
+              await sendVoiceToTelegram(tmpVoiceTG, 'BOT SUDAH ON!')
+              fs.unlinkSync(tmpVoiceTG)
+            } catch (e) {
+              log('⚠️ Gagal buat/kirim voice note ke Telegram:', e?.message || e)
+            }
+
+            entry.count += 1
+            triggerCountMap.set(text, entry)
+          } else {
+            log('⚠️ Sudah forward 2x untuk trigger ini ke Telegram, melewatkan.')
+          }
+        } catch (err) {
+          log('❌ Error saat handle trigger multi-forward dengan voice note:', err?.message || err)
+        }
+      }
+    }
+  })
 
   process.on('unhandledRejection', (reason) => {
     log('🔥 Unhandled Rejection:', reason)
