@@ -26,7 +26,7 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
-const NOMOR_PENERIMA_PANGGILAN = process.env.WHATSAPP_OWNER.replace('@s.whatsapp.net', '')
+const TWILIO_RECIPIENT_NUMBER = process.env.TWILIO_RECIPIENT_NUMBER
 
 // Debug konfigurasi
 console.log('=== konfigurasi ===')
@@ -35,6 +35,7 @@ console.log('TELEGRAM_BOT_TOKEN =', TELEGRAM_BOT_TOKEN ? '[TERSEDIA]' : '[TIDAK 
 console.log('TELEGRAM_CHAT_ID =', TELEGRAM_CHAT_ID)
 console.log('===================')
 console.log('TWILIO_PHONE_NUMBER =', TWILIO_PHONE_NUMBER)
+console.log('TWILIO_RECIPIENT_NUMBER =', TWILIO_RECIPIENT_NUMBER)
 
 // Validasi
 if (!nomorForwardKe) {
@@ -45,9 +46,8 @@ if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
   console.error('❌ TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID tidak diset di bot.env/.env')
   process.exit(1)
 }
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-  console.error('❌ Kredensial TWILIO tidak diset di bot.env/.env')
-  // Anda bisa memilih untuk tidak exit(1) jika panggilan hanya fitur opsional
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER || !TWILIO_RECIPIENT_NUMBER) {
+  console.error('❌ Kredensial TWILIO atau nomor penerima tidak diset di bot.env/.env')
 }
 
 // ==== Persist last trigger (optional) ====
@@ -85,39 +85,39 @@ setInterval(() => {
   }
 }, 60_000)
 
-// ==== Logika Panggilan Telepon dengan Cooldown ====
-const MAX_ALARM_CALLS = 3
-const CALL_COOLDOWN_MS = 5 * 60 * 1000 // 5 menit
-let alarmCallState = {
+// ==== Logika Panggilan Telepon dengan Cooldown (DIUBAH MENJADI SMS) ====
+const MAX_ALARM_SMS = 3
+const SMS_COOLDOWN_MS = 5 * 60 * 1000 // 5 menit
+let alarmSmsState = {
   count: 0,
-  lastCalled: 0,
+  lastSent: 0,
   isTriggered: false,
 }
 
 // Fungsi yang terus berjalan untuk mengecek status alarm
 setInterval(async () => {
-  if (alarmCallState.isTriggered) {
+  if (alarmSmsState.isTriggered) {
     const now = Date.now()
-    // Cek apakah belum melebihi batas panggilan
+    // Cek apakah belum melebihi batas SMS
     // DAN apakah sudah melewati waktu cooldown
-    if (alarmCallState.count < MAX_ALARM_CALLS && (now - alarmCallState.lastCalled) > CALL_COOLDOWN_MS) {
+    if (alarmSmsState.count < MAX_ALARM_SMS && (now - alarmSmsState.lastSent) > SMS_COOLDOWN_MS) {
       try {
         const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        await twilioClient.calls.create({
-          twiml: '<Response><Say voice="male">Alarm. Ada pesan tidak terduga.</Say><Hangup/></Response>',
-          to: NOMOR_PENERIMA_PANGGILAN,
+        await twilioClient.messages.create({
+          body: `‼️ ALARM: Ada pesan tidak terduga dari ${nomorTujuanAwal}.`,
+          to: TWILIO_RECIPIENT_NUMBER,
           from: TWILIO_PHONE_NUMBER,
         })
-        log(`📞 Panggilan alarm ke ${NOMOR_PENERIMA_PANGGILAN} berhasil. Panggilan ke-${alarmCallState.count + 1}.`)
-        alarmCallState.count += 1
-        alarmCallState.lastCalled = now
-      } catch (callError) {
-        log('❌ Gagal membuat panggilan alarm:', callError.message || callError)
+        log(`✉️ SMS alarm ke ${TWILIO_RECIPIENT_NUMBER} berhasil. SMS ke-${alarmSmsState.count + 1}.`)
+        alarmSmsState.count += 1
+        alarmSmsState.lastSent = now
+      } catch (smsError) {
+        log('❌ Gagal membuat SMS alarm:', smsError.message || smsError)
       }
-    } else if (alarmCallState.count >= MAX_ALARM_CALLS) {
+    } else if (alarmSmsState.count >= MAX_ALARM_SMS) {
       // Hentikan alarm jika sudah mencapai batas
-      alarmCallState.isTriggered = false
-      log('⚠️ Sudah 3x panggilan alarm untuk trigger ini, alarm dimatikan.')
+      alarmSmsState.isTriggered = false
+      log('⚠️ Sudah 3x SMS alarm untuk trigger ini, alarm dimatikan.')
     }
   }
 }, 10_000) // Cek setiap 10 detik
@@ -298,7 +298,7 @@ async function startBot() {
         saveLastTrigger(text)
         
         // Aktifkan alarm jika ada pesan tak terduga
-        alarmCallState.isTriggered = true
+        alarmSmsState.isTriggered = true
 
         try {
           // === WhatsApp owner ===
